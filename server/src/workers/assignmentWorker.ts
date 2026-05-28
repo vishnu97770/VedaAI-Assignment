@@ -1,26 +1,16 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import { Worker, Job } from 'bullmq';
-import redis from '../config/redis';
+import Groq from 'groq-sdk';
 import Assignment from '../models/assignment';
 import { notifyClient } from '../websocket/wsManager';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
 
-const getConnection = () => ({
-  host: 'helpful-seahorse-137994.upstash.io',
-  port: 6379,
-  password: process.env.REDIS_PASSWORD,
-  tls: {},
-});
-
-
-// this is where the actual AI magic happens
 const generateQuestions = async (data: any) => {
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-
   const prompt = `
     You are an expert teacher creating a question paper.
-    
     Subject: ${data.subject}
     Title: ${data.title}
     Total Questions: ${data.numberOfQuestions}
@@ -29,7 +19,7 @@ const generateQuestions = async (data: any) => {
     Additional Instructions: ${data.additionalInstructions || 'None'}
     
     Create a structured question paper with sections.
-    You MUST respond with ONLY a valid JSON object, no extra text.
+    Respond with ONLY valid JSON, no extra text, no markdown.
     
     Format:
     {
@@ -49,19 +39,19 @@ const generateQuestions = async (data: any) => {
     }
     
     Rules:
-    - Difficulty must be exactly: easy, medium, or hard
-    - Distribute questions evenly across sections
+    - difficulty must be exactly: easy, medium, or hard
     - Make questions relevant to the subject
-    - Total marks of all questions must equal ${data.totalMarks}
+    - Total marks must equal ${data.totalMarks}
   `;
 
+  const completion = await groq.chat.completions.create({
+    messages: [{ role: 'user', content: prompt }],
+    model: 'llama-3.3-70b-versatile',
+    temperature: 0.7,
+  });
 
-  const result = await model.generateContent(prompt);
-  const response = result.response.text();
-
-  
-  // clean the response and parse it
-  const cleaned = response
+  const text = completion.choices[0]?.message?.content || '';
+  const cleaned = text
     .replace(/```json/g, '')
     .replace(/```/g, '')
     .trim();
@@ -69,8 +59,13 @@ const generateQuestions = async (data: any) => {
   return JSON.parse(cleaned);
 };
 
+const getConnection = () => ({
+  host: 'helpful-seahorse-137994.upstash.io',
+  port: 6379,
+  password: process.env.REDIS_PASSWORD,
+  tls: {},
+});
 
-// worker listens to the queue and processes jobs
 const worker = new Worker(
   'assignment-generation',
   async (job: Job) => {
@@ -79,33 +74,23 @@ const worker = new Worker(
     try {
       console.log(`Processing job for assignment: ${assignmentId}`);
 
-
-      // notify frontend - started
       notifyClient(assignmentId, {
         type: 'status',
         status: 'processing',
         message: 'Generating your question paper...',
       });
 
-
-      // update status in db
       await Assignment.findByIdAndUpdate(assignmentId, {
         status: 'processing',
       });
 
-
-      // call gemini
       const generated = await generateQuestions(data);
 
-
-      // save result to mongodb
       await Assignment.findByIdAndUpdate(assignmentId, {
         status: 'completed',
         sections: generated.sections,
       });
 
-
-      // notify frontend - done!
       notifyClient(assignmentId, {
         type: 'status',
         status: 'completed',
@@ -141,4 +126,4 @@ worker.on('failed', (job: Job | undefined, err: Error) => {
   console.error(`Job ${job?.id} failed:`, err);
 });
 
-export default worker; 
+export default worker;
