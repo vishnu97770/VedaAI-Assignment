@@ -14,7 +14,7 @@ export interface IAssignment {
     _id: string;
     title: string;
     subject: string;
-    dueData: string;
+    dueDate: string;
     questionTypes: string[];
     numberOfQuestions: number;
     totalMarks: number;
