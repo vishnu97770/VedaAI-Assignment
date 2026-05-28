@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAssignmentStore } from '@/store/assignmentStore';
-import { getAllAssignment, getAllAssignments } from '@/lib/api';
+import {  getAllAssignments } from '@/lib/api';
 
 export default function Dashboard() {
     const router = useRouter();
